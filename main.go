@@ -1,53 +1,56 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/Jawadh-Salih/gn-lk-api/types"
+	"github.com/Jawadh-Salih/gn-lk-api/internal/api"
 	"github.com/gin-gonic/gin"
 )
 
-// pingHandler handles the /ping route
-func pingHandler(c *gin.Context) {
-	jsonFile, err := os.Open("gn-list.json")
-	if err != nil {
-		fmt.Println(err)
-	}
-	defer jsonFile.Close()
-
-	byteValue, _ := ioutil.ReadAll(jsonFile)
-
-	fmt.Println(string(byteValue))
-
-	// Unmarshal the JSON data into a slice of GNDivisions
-	var divisions []types.GNDivision
-	err = json.Unmarshal(byteValue, &divisions)
-	if err != nil {
-		fmt.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": err.Error(),
-		})
-		return
-
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":   "pong",
-		"divisions": divisions, // Include the divisions data in the response
-	})
-}
-
 func main() {
-	// Read the JSON file
+	// Create a Gin router
+	router := api.InitRoutes()
 
-	router := gin.Default()
+	// Define a simple handler
+	router.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, "Hello, World!")
+	})
 
-	// Define your API routes here
-	router.GET("/ping", pingHandler)
+	// Create an HTTP server
+	srv := &http.Server{
+		Addr:    ":8081",
+		Handler: router,
+	}
 
-	router.Run(":8080")
+	// Channel to listen for interrupt signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGTSTP)
+
+	// Goroutine to handle the signal
+	go func() {
+		sig := <-sigCh
+		fmt.Printf("Received signal: %v\n", sig)
+
+		// Create a deadline to wait for.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Attempt to gracefully shutdown the server.
+		if err := srv.Shutdown(ctx); err != nil {
+			fmt.Println("Server forced to shutdown:", err)
+		} else {
+			fmt.Println("Server gracefully stopped")
+		}
+	}()
+
+	// Start the server
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Printf("Listen and serve error: %v\n", err)
+	}
 }
